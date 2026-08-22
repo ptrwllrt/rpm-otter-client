@@ -49,7 +49,7 @@
 <body>
 <div class="wrap">
   <h1>Otterly Export</h1>
-  <p class="sub">Alle Prompt-Antworten eines Otterly-Markenberichts in eine Excel-Datei exportieren.</p>
+  <p class="sub">Alle Prompt-Antworten eines Otterly-Markenberichts in eine CSV-Datei exportieren.</p>
 
   <!-- Step 1: API key -->
   <div class="card" id="keyCard">
@@ -81,9 +81,10 @@
       <div>
         <label for="daysSel">Zeitraum</label>
         <select id="daysSel">
+          <option value="14" selected>Letzte 14 Tage</option>
           <option value="30">Letzte 30 Tage</option>
           <option value="90">Letzte 90 Tage</option>
-          <option value="120" selected>Letzte 120 Tage</option>
+          <option value="120">Letzte 120 Tage</option>
           <option value="180">Letzte 180 Tage</option>
           <option value="365">Letzte 365 Tage</option>
         </select>
@@ -103,7 +104,7 @@
       </div>
     </div>
     <p class="hint" id="reportMeta"></p>
-    <button id="exportBtn" style="margin-top:6px">Nach Excel exportieren</button>
+    <button id="exportBtn" style="margin-top:6px">Als CSV exportieren</button>
     <div class="bar hidden" id="barWrap"><div id="bar"></div></div>
     <div class="status" id="exportStatus"></div>
     <div class="files" id="files"></div>
@@ -111,8 +112,6 @@
 
   <p class="muted-inline">Die Daten stammen aus der öffentlichen Otterly-API. Diese Seite läuft vollständig auf Ihrem Mac.</p>
 </div>
-
-<!--SHEETJS-->
 
 <script>
 "use strict";
@@ -300,7 +299,7 @@ async function runExport() {
     }
     if (!rows.length) { setStatus("Keine Antworten in diesem Zeitraum gefunden.", "err"); return; }
 
-    setStatus(`Excel wird erstellt (${rows.length} Antworten)…`);
+    setStatus(`Datei wird erstellt (${rows.length} Antworten)…`);
     const stamp = new Date().toISOString().slice(0, 10);
     const safe = (report.brand || "report").replace(/[^\w-]+/g, "_");
     buildAndDownload(report, base, rows, promptSummary, `${safe}_${stamp}`);
@@ -314,41 +313,38 @@ async function runExport() {
 }
 function setBar(frac) { $("bar").style.width = Math.round(frac * 100) + "%"; }
 
-// ---------- Excel / JSON output ----------
+// ---------- CSV output ----------
 function buildAndDownload(report, w, rows, promptSummary, baseName) {
-  const wb = XLSX.utils.book_new();
+  // Excel (also the German locale) reads a UTF-8 BOM + semicolon-separated CSV
+  // cleanly, including umlauts. Every field is quoted so newlines/commas/quotes
+  // inside the response text stay intact.
+  const csv = toCsv(rows);
+  triggerDownload(csv, baseName + ".csv", "text/csv;charset=utf-8");
+  // Also offer an explicit link in case the automatic download was blocked.
+  $("files").appendChild(fileLink(csv, baseName + ".csv", "text/csv;charset=utf-8", "CSV erneut herunterladen"));
+}
 
-  const wsResp = XLSX.utils.json_to_sheet(rows);
-  wsResp["!cols"] = [ {wch:9},{wch:50},{wch:14},{wch:22},{wch:9},{wch:14},{wch:16},{wch:26},{wch:10},{wch:50},{wch:100},{wch:22},{wch:22} ];
-  wsResp["!autofilter"] = { ref: XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:rows.length, c:12} }) };
-  XLSX.utils.book_append_sheet(wb, wsResp, "Antworten");
+function toCsv(rows) {
+  if (!rows.length) return "";
+  const cols = Object.keys(rows[0]);
+  const cell = (v) => '"' + (v == null ? "" : String(v)).replace(/"/g, '""') + '"';
+  const lines = [cols.map(cell).join(";")];
+  for (const r of rows) lines.push(cols.map((c) => cell(r[c])).join(";"));
+  return "﻿" + lines.join("\r\n");
+}
 
-  const wsP = XLSX.utils.json_to_sheet(promptSummary);
-  wsP["!cols"] = [ {wch:9},{wch:7},{wch:60},{wch:13},{wch:15},{wch:15},{wch:12},{wch:24},{wch:22} ];
-  XLSX.utils.book_append_sheet(wb, wsP, "Prompts");
-
-  const about = [
-    ["Marke", report.brand], ["Berichtstitel", report.reportTitle], ["Bericht-ID", report.id],
-    ["Länder", (report.countries || []).join(", ")], ["Zeitraum", `${w.startDate} → ${w.endDate}`],
-    ["Prompts geladen", promptSummary.length], ["Antworten geladen", rows.length],
-    ["Erstellt", new Date().toISOString()], ["Quelle", "Öffentliche Otterly.ai-API"],
-  ];
-  const wsA = XLSX.utils.aoa_to_sheet(about);
-  wsA["!cols"] = [ {wch:20},{wch:80} ];
-  XLSX.utils.book_append_sheet(wb, wsA, "Info");
-
-  XLSX.writeFile(wb, baseName + ".xlsx");
-
-  // JSON for the analysis step
-  const json = JSON.stringify({
-    report: { id: report.id, brand: report.brand, reportTitle: report.reportTitle, countries: report.countries },
-    window: w, prompts: promptSummary, responses: rows,
-  }, null, 2);
-  const blob = new Blob([json], { type: "application/json" });
+function fileLink(text, filename, mime, label) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob); a.download = baseName + ".json";
-  a.textContent = "JSON herunterladen (für KI-Analyse)";
-  $("files").appendChild(a);
+  a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+  a.download = filename;
+  a.textContent = label;
+  return a;
+}
+function triggerDownload(text, filename, mime) {
+  const a = fileLink(text, filename, mime, "");
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }

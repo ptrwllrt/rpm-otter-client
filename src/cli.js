@@ -35,7 +35,7 @@ Usage:
 Flags for pull:
   --country <code[,code]>   Only these countries (default: all tracked by the report)
   --engine  <engine>        Only one engine (chatgpt|google|perplexity|copilot|gemini|claude|google_ai_mode)
-  --days    <n>             Look back n days (default: 30, or OTTERLY_DAYS)
+  --days    <n>             Look back n days (default: 14, or OTTERLY_DAYS)
   --start   <YYYY-MM-DD>    Explicit window start (with --end)
   --end     <YYYY-MM-DD>    Explicit window end
 

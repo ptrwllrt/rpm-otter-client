@@ -22,7 +22,6 @@
   "homepage": "https://github.com/ptrwllrt/rpm-otter-client#readme",
   "type": "module",
   "dependencies": {
-    "exceljs": "^4.4.0",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "exceljs": "^4.4.0"
   }
 }

@@ -31,10 +31,10 @@ export function resolveDateWindow({ startDate, endDate, days } = {}) {
   const envEnd = endDate ?? process.env.OTTERLY_END_DATE;
   if (envStart && envEnd) return { startDate: envStart, endDate: envEnd };
 
-  const n = Number(days ?? process.env.OTTERLY_DAYS ?? 30);
+  const n = Number(days ?? process.env.OTTERLY_DAYS ?? 14);
   const end = new Date();
   const start = new Date();
-  start.setDate(end.getDate() - (Number.isFinite(n) ? n : 30));
+  start.setDate(end.getDate() - (Number.isFinite(n) ? n : 14));
   return { startDate: fmt(start), endDate: fmt(end) };
 }
 
