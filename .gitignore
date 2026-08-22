@@ -8,3 +8,7 @@ otterly-export.html
 
 # Local Netlify folder
 .netlify
+
+# never commit pulled data / archives (anywhere, not just output/)
+*.csv
+*.zip

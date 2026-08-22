@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { loadEnv, resolveDateWindow, OUTPUT_DIR } from "./config.js";
 import { OtterlyClient, OtterlyError } from "./otterly.js";
 import { toCsv } from "./csv.js";
+import { toRow, resolveColumns, fileBase } from "./columns.js";
 
 loadEnv();
 
@@ -30,7 +31,7 @@ Otterly brand-report exporter
 
 Usage:
   node src/cli.js list                       List your brand reports (id, brand, countries)
-  node src/cli.js pull <reportId> [flags]    Pull all prompts + AI responses to Excel + JSON
+  node src/cli.js pull <reportId> [flags]    Pull all prompts + AI responses to CSV
 
 Flags for pull:
   --country <code[,code]>   Only these countries (default: all tracked by the report)
@@ -38,6 +39,10 @@ Flags for pull:
   --days    <n>             Look back n days (default: 14, or OTTERLY_DAYS)
   --start   <YYYY-MM-DD>    Explicit window start (with --end)
   --end     <YYYY-MM-DD>    Explicit window end
+  --single                  One merged CSV instead of one file per prompt (default: per prompt)
+  --columns <a,b,c>         Pick columns (default: prompt,engine,brand_mentioned,brand_sentiment,
+                            competitors_mentioned,response_text,citations)
+  --all-columns             Include every available column
 
 Config (.env): OTTERLY_API_KEY (required), OTTERLY_DAYS, OTTERLY_START_DATE, OTTERLY_END_DATE
 `.trim());
@@ -59,34 +64,16 @@ async function listReports(client) {
   console.log("Pull one with:  node src/cli.js pull <id>\n");
 }
 
-// One CSV row per AI response, using the API's own field names. Nested arrays
-// (brandMentions, citations, ads, shopping, webSearchQuery) are kept verbatim as
-// JSON. country/prompt/promptId are the API fields that give each response context.
-// Mirror of the web app's toRow — keep the two in sync.
-function toRow(country, p, resp) {
-  return {
-    country,
-    prompt: p.prompt,
-    promptId: p.id,
-    runId: resp.runId,
-    runDate: resp.runDate,
-    engine: resp.engine,
-    state: resp.state,
-    content: resp.content ?? "",
-    overviewAvailable: resp.overviewAvailable,
-    brandMentions: JSON.stringify(resp.brandMentions ?? []),
-    citations: JSON.stringify(resp.citations ?? []),
-    ads: JSON.stringify(resp.ads ?? []),
-    shopping: JSON.stringify(resp.shopping ?? []),
-    webSearchQuery: JSON.stringify(resp.webSearchQuery ?? []),
-  };
-}
-
+// Flags that take no value; everything else consumes the next token.
+const BOOL_FLAGS = new Set(["single", "all-columns"]);
 function parseFlags(argv) {
   const flags = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith("--")) flags[a.slice(2)] = argv[++i];
+    if (!a.startsWith("--")) continue;
+    const key = a.slice(2);
+    if (BOOL_FLAGS.has(key)) flags[key] = true;
+    else flags[key] = argv[++i];
   }
   return flags;
 }
@@ -115,14 +102,21 @@ async function pullReport(client, argv) {
     process.exit(1);
   }
 
+  const cols = resolveColumns(flags.columns, { all: "all-columns" in flags });
+  const single = "single" in flags;   // one merged file instead of one per prompt
+
   console.log(`\nBrand:     ${report.brand} — ${report.reportTitle ?? ""}`);
   console.log(`Window:    ${window.startDate} → ${window.endDate}`);
   console.log(`Countries: ${countries.join(", ")}`);
   if (flags.engine) console.log(`Engine:    ${flags.engine}`);
+  console.log(`Columns:   ${cols.join(", ")}`);
+  console.log(`Output:    ${single ? "one merged CSV" : "one CSV per prompt"}`);
   console.log("");
 
-  const rows = [];
-  let promptCount = 0;
+  // Group rows by prompt so we can write one file per prompt (or merge them).
+  const groups = [];             // [{ prompt, rows }]
+  const byPrompt = new Map();    // prompt id -> group
+  let total = 0, promptCount = 0;
 
   for (const country of countries) {
     const prompts = await client.listReportPrompts(report.id, { ...window, country });
@@ -133,21 +127,37 @@ async function pullReport(client, argv) {
       const responses = await client.listPromptResponses(report.id, p.id, {
         ...window, country, engine: flags.engine,
       });
+      total += responses.length;
       process.stdout.write(`\r[${country}] prompt ${i + 1}/${prompts.length} — ${responses.length} responses     `);
 
-      for (const resp of responses) rows.push(toRow(country, p, resp));
+      let g = byPrompt.get(p.id);
+      if (!g) { g = { prompt: p.prompt, rows: [] }; byPrompt.set(p.id, g); groups.push(g); }
+      for (const resp of responses) g.rows.push(toRow(cols, country, p, resp));
     }
     process.stdout.write("\n");
   }
 
   mkdirSync(OUTPUT_DIR, { recursive: true });
-  const stamp = new Date().toISOString().slice(0, 10);
-  const safeBrand = (report.brand ?? "report").replace(/[^\w-]+/g, "_");
-  const csvPath = join(OUTPUT_DIR, `${safeBrand}_${stamp}.csv`);
-  writeFileSync(csvPath, toCsv(rows));
+  const written = [];
+  if (single) {
+    const allRows = groups.flatMap((g) => g.rows);
+    const path = join(OUTPUT_DIR, fileBase(report, "all") + ".csv");
+    writeFileSync(path, toCsv(cols, allRows));
+    written.push(path);
+  } else {
+    const used = new Map();
+    for (const g of groups) {
+      let name = fileBase(report, g.prompt);
+      const n = (used.get(name) || 0) + 1; used.set(name, n);   // de-dupe identical names
+      if (n > 1) name += `_${n}`;
+      const path = join(OUTPUT_DIR, name + ".csv");
+      writeFileSync(path, toCsv(cols, g.rows));
+      written.push(path);
+    }
+  }
 
-  console.log(`\nDone. ${rows.length} responses across ${promptCount} prompt/country pairs.`);
-  console.log(`  CSV: ${csvPath}\n`);
+  console.log(`\nDone. ${total} responses across ${promptCount} prompt/country pairs.`);
+  console.log(`  ${written.length} file(s) in ${OUTPUT_DIR}`);
 }
 
 main().catch((err) => {

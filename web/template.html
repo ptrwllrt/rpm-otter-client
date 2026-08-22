@@ -42,6 +42,14 @@
   .files a { display: inline-block; margin-right: 14px; margin-top: 10px; font-weight: 600; }
   .keyrow { display: flex; gap: 8px; align-items: center; }
   .keyrow input { flex: 1; }
+  .radios { display: flex; gap: 18px; flex-wrap: wrap; }
+  .rl, .cl { display: flex; align-items: center; gap: 7px; font-weight: 400; margin: 0; }
+  .rl input, .cl input { width: auto; }
+  details { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+  .colgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 16px; margin-top: 12px; }
+  .colactions { margin-top: 10px; display: flex; gap: 12px; }
+  .colactions a { color: var(--accent); font-size: 13px; cursor: pointer; }
   .muted-inline { color: var(--muted); font-size: 13px; }
   code { background: #eef0f3; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
 </style>
@@ -49,7 +57,7 @@
 <body>
 <div class="wrap">
   <h1>Otterly Export</h1>
-  <p class="sub">Alle Prompt-Antworten eines Otterly-Markenberichts in eine CSV-Datei exportieren.</p>
+  <p class="sub">Alle Prompt-Antworten eines Otterly-Markenberichts als CSV exportieren — einzeln pro Prompt (ZIP) oder gesammelt.</p>
 
   <!-- Step 1: API key -->
   <div class="card" id="keyCard">
@@ -103,8 +111,22 @@
         </select>
       </div>
     </div>
+    <div style="margin-top:14px">
+      <label>Aufteilung</label>
+      <div class="radios">
+        <label class="rl"><input type="radio" name="fileMode" value="perPrompt" checked> Eine Datei pro Prompt (als ZIP)</label>
+        <label class="rl"><input type="radio" name="fileMode" value="single"> Alles in einer Datei</label>
+      </div>
+    </div>
+    <details style="margin-top:14px">
+      <summary>Spalten</summary>
+      <div class="colgrid" id="colBox"></div>
+      <div class="colactions">
+        <a id="colDefault">Standard</a><a id="colAll">Alle</a><a id="colNone">Keine</a>
+      </div>
+    </details>
     <p class="hint" id="reportMeta"></p>
-    <button id="exportBtn" style="margin-top:6px">Als CSV exportieren</button>
+    <button id="exportBtn" style="margin-top:6px">Exportieren</button>
     <div class="bar hidden" id="barWrap"><div id="bar"></div></div>
     <div class="status" id="exportStatus"></div>
     <div class="files" id="files"></div>
@@ -256,17 +278,23 @@ async function runExport() {
   if (!report) return;
   const days = Number($("daysSel").value);
   const engine = $("engineSel").value;
+  const cols = selectedColumns();
+  const perPrompt = document.querySelector('input[name="fileMode"]:checked').value === "perPrompt";
   const countries = report.countries && report.countries.length ? report.countries : [null];
   const base = windowForDays(days);
+
+  const setStatus = (msg, cls) => { const el = $("exportStatus"); el.textContent = msg; el.className = "status" + (cls ? " " + cls : ""); };
+  if (!cols.length) { setStatus("Bitte mindestens eine Spalte auswählen.", "err"); return; }
 
   $("exportBtn").disabled = true;
   $("files").innerHTML = "";
   $("barWrap").classList.remove("hidden");
   setBar(0);
-  const setStatus = (msg, cls) => { const el = $("exportStatus"); el.textContent = msg; el.className = "status" + (cls ? " " + cls : ""); };
 
-  const rows = [];
-  let promptCount = 0;
+  // Group rows by prompt so we can emit one file per prompt (or merge them).
+  const groups = [];              // [{ prompt, rows }]
+  const byPrompt = new Map();     // prompt id -> group
+  let total = 0, promptCount = 0;
   try {
     for (const country of countries) {
       const w = { ...base, country, engine };
@@ -276,18 +304,37 @@ async function runExport() {
       for (let i = 0; i < prompts.length; i++) {
         const p = prompts[i];
         const responses = await listPromptResponses(report.id, p.id, w);
-        setStatus(`${country || ""} — Prompt ${i + 1}/${prompts.length}: ${responses.length} Antworten (bisher gesamt ${rows.length + responses.length})`);
+        total += responses.length;
+        setStatus(`${country || ""} — Prompt ${i + 1}/${prompts.length}: ${responses.length} Antworten (gesamt ${total})`);
         setBar((i + 1) / prompts.length);
-        for (const resp of responses) rows.push(toRow(country, p, resp));
+        let g = byPrompt.get(p.id);
+        if (!g) { g = { prompt: p.prompt, rows: [] }; byPrompt.set(p.id, g); groups.push(g); }
+        for (const resp of responses) g.rows.push(toRow(cols, country, p, resp));
       }
     }
-    if (!rows.length) { setStatus("Keine Antworten in diesem Zeitraum gefunden.", "err"); return; }
+    if (!total) { setStatus("Keine Antworten in diesem Zeitraum gefunden.", "err"); return; }
 
-    setStatus(`Datei wird erstellt (${rows.length} Antworten)…`);
-    const stamp = new Date().toISOString().slice(0, 10);
-    const safe = (report.brand || "report").replace(/[^\w-]+/g, "_");
-    buildAndDownload(rows, `${safe}_${stamp}`);
-    setStatus(`Fertig — ${rows.length} Antworten aus ${promptCount} Prompts.`, "ok");
+    if (perPrompt) {
+      setStatus(`ZIP wird erstellt (${groups.length} Dateien, ${total} Antworten)…`);
+      const used = new Map();
+      const files = groups.map((g) => {
+        let name = fileBase(report, g.prompt);
+        const n = (used.get(name) || 0) + 1; used.set(name, n);   // de-dupe identical names
+        if (n > 1) name += `_${n}`;
+        return { name: name + ".csv", data: toCsv(cols, g.rows) };
+      });
+      const zipName = fileBase(report, "all") + ".zip";
+      const blob = makeZip(files);
+      triggerDownload(blob, zipName);
+      $("files").appendChild(fileLink(blob, zipName, "ZIP erneut herunterladen"));
+    } else {
+      const allRows = groups.flatMap((g) => g.rows);
+      const name = fileBase(report, "all") + ".csv";
+      const blob = csvBlob(toCsv(cols, allRows));
+      triggerDownload(blob, name);
+      $("files").appendChild(fileLink(blob, name, "CSV erneut herunterladen"));
+    }
+    setStatus(`Fertig — ${total} Antworten aus ${promptCount} Prompts.`, "ok");
     setBar(1);
   } catch (e) {
     setStatus("Fehler: " + e.message, "err");
@@ -297,65 +344,154 @@ async function runExport() {
 }
 function setBar(frac) { $("bar").style.width = Math.round(frac * 100) + "%"; }
 
-// One CSV row per AI response, using the API's own field names. Nested arrays
-// (brandMentions, citations, ads, shopping, webSearchQuery) are kept verbatim as
-// JSON. country/prompt/promptId are the API fields that give each response context.
-function toRow(country, p, resp) {
+// ---------- columns ----------
+// Catalog of available CSV columns, in output order. Each maps a response (with
+// derived context) to a cell. Snake_case names follow Otterly's own export style.
+const COLUMNS = {
+  prompt: (c) => c.p.prompt,
+  engine: (c) => c.resp.engine,
+  brand_mentioned: (c) => (c.mainMentions > 0 ? "true" : "false"),
+  brand_sentiment: () => "",                       // not exposed by the API (shown only in Otterly's UI)
+  competitors_mentioned: (c) => c.competitors.join(", "),
+  response_text: (c) => c.resp.content ?? "",
+  citations: (c) => (c.resp.citations ?? []).map((x) => x.link).join("\n"),
+  country: (c) => c.country,
+  run_date: (c) => c.resp.runDate,
+  state: (c) => c.resp.state,
+  brand_mentions_count: (c) => c.mainMentions,
+  overview_available: (c) => c.resp.overviewAvailable,
+  web_search_query: (c) => (c.resp.webSearchQuery ?? []).join(" | "),
+  citations_json: (c) => JSON.stringify(c.resp.citations ?? []),
+  brand_mentions_json: (c) => JSON.stringify(c.resp.brandMentions ?? []),
+  ads_json: (c) => JSON.stringify(c.resp.ads ?? []),
+  shopping_json: (c) => JSON.stringify(c.resp.shopping ?? []),
+  prompt_id: (c) => c.p.id,
+  run_id: (c) => c.resp.runId,
+};
+const DEFAULT_COLUMNS = ["prompt", "engine", "brand_mentioned", "brand_sentiment", "competitors_mentioned", "response_text", "citations"];
+
+function rowContext(country, p, resp) {
+  const mentions = resp.brandMentions ?? [];
+  const main = mentions.find((m) => m.isMainBrand);
   return {
-    country,
-    prompt: p.prompt,
-    promptId: p.id,
-    runId: resp.runId,
-    runDate: resp.runDate,
-    engine: resp.engine,
-    state: resp.state,
-    content: resp.content ?? "",
-    overviewAvailable: resp.overviewAvailable,
-    brandMentions: JSON.stringify(resp.brandMentions ?? []),
-    citations: JSON.stringify(resp.citations ?? []),
-    ads: JSON.stringify(resp.ads ?? []),
-    shopping: JSON.stringify(resp.shopping ?? []),
-    webSearchQuery: JSON.stringify(resp.webSearchQuery ?? []),
+    country, p, resp,
+    mainMentions: (main && main.mentions) || 0,
+    competitors: mentions.filter((m) => !m.isMainBrand && m.mentions > 0).map((m) => m.brand),
   };
 }
-
-// ---------- CSV output ----------
-function buildAndDownload(rows, baseName) {
-  // Excel (also the German locale) reads a UTF-8 BOM + semicolon-separated CSV
-  // cleanly, including umlauts. Every field is quoted so newlines/commas/quotes
-  // inside the response text stay intact.
-  const csv = toCsv(rows);
-  triggerDownload(csv, baseName + ".csv", "text/csv;charset=utf-8");
-  // Also offer an explicit link in case the automatic download was blocked.
-  $("files").appendChild(fileLink(csv, baseName + ".csv", "text/csv;charset=utf-8", "CSV erneut herunterladen"));
+function toRow(cols, country, p, resp) {
+  const c = rowContext(country, p, resp);
+  const row = {};
+  for (const k of cols) row[k] = COLUMNS[k] ? COLUMNS[k](c) : "";
+  return row;
 }
 
-function toCsv(rows) {
-  if (!rows.length) return "";
-  const cols = Object.keys(rows[0]);
+// ---------- column picker UI ----------
+function buildColumnPicker() {
+  const box = $("colBox");
+  box.innerHTML = Object.keys(COLUMNS).map((k) =>
+    `<label class="cl"><input type="checkbox" value="${k}"${DEFAULT_COLUMNS.includes(k) ? " checked" : ""}> ${k}</label>`
+  ).join("");
+  $("colDefault").onclick = () => setCols(DEFAULT_COLUMNS);
+  $("colAll").onclick = () => setCols(Object.keys(COLUMNS));
+  $("colNone").onclick = () => setCols([]);
+}
+function setCols(keys) {
+  for (const cb of $("colBox").querySelectorAll("input")) cb.checked = keys.includes(cb.value);
+}
+function selectedColumns() {
+  // Preserve catalog order regardless of checkbox order.
+  const checked = new Set([...$("colBox").querySelectorAll("input:checked")].map((cb) => cb.value));
+  return Object.keys(COLUMNS).filter((k) => checked.has(k));
+}
+
+// ---------- CSV ----------
+function toCsv(cols, rows) {
   const cell = (v) => '"' + (v == null ? "" : String(v)).replace(/"/g, '""') + '"';
   const lines = [cols.map(cell).join(";")];
   for (const r of rows) lines.push(cols.map((c) => cell(r[c])).join(";"));
   return "﻿" + lines.join("\r\n");
 }
 
-function fileLink(text, filename, mime, label) {
+// ---------- file naming ----------
+// otterly_raw_answers_<brand>_<reportLabel>_<prompt|all>
+function sanitize(s, max) {
+  let out = String(s ?? "").replace(/[\/\\:*?"<>|\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+  if (max && out.length > max) out = out.slice(0, max).trim();
+  return out;
+}
+function reportLabel(report) {
+  const m = /\(([^)]+)\)/.exec(report.reportTitle || "");
+  return sanitize(m ? m[1] : "", 40).toLowerCase();
+}
+function fileBase(report, promptOrAll) {
+  const tail = promptOrAll === "all" ? "all" : sanitize(promptOrAll, 50);
+  return ["otterly_raw_answers", sanitize(report.brand, 40), reportLabel(report), tail]
+    .filter((s) => s).join("_");
+}
+
+// ---------- download helpers ----------
+function fileLink(blob, filename, label) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+  a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.textContent = label;
   return a;
 }
-function triggerDownload(text, filename, mime) {
-  const a = fileLink(text, filename, mime, "");
+function triggerDownload(blob, filename) {
+  const a = fileLink(blob, filename, "");
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+const csvBlob = (text) => new Blob([text], { type: "text/csv;charset=utf-8" });
+
+// ---------- minimal ZIP (store, no compression, dependency-free) ----------
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function makeZip(files) {
+  const enc = new TextEncoder();
+  const parts = [], central = [];
+  let offset = 0;
+  const u16 = (n) => [n & 0xFF, (n >>> 8) & 0xFF];
+  const u32 = (n) => [n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF];
+  for (const f of files) {
+    const name = enc.encode(f.name);
+    const data = f.data instanceof Uint8Array ? f.data : enc.encode(f.data);
+    const crc = crc32(data);
+    const local = [0x50,0x4b,0x03,0x04, ...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),
+      ...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0)];
+    parts.push(new Uint8Array(local), name, data);
+    central.push([0x50,0x4b,0x01,0x02, ...u16(20),...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),
+      ...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),
+      ...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(offset), name]);
+    offset += local.length + name.length + data.length;
+  }
+  const centralParts = [], centralStart = offset;
+  let centralSize = 0;
+  for (const c of central) {
+    const head = c.slice(0, c.length - 1), name = c[c.length - 1];
+    const arr = new Uint8Array(head);
+    centralParts.push(arr, name);
+    centralSize += arr.length + name.length;
+  }
+  const end = new Uint8Array([0x50,0x4b,0x05,0x06, ...u16(0),...u16(0),
+    ...u16(files.length),...u16(files.length),...u32(centralSize),...u32(centralStart),...u16(0)]);
+  return new Blob([...parts, ...centralParts, end], { type: "application/zip" });
 }
 
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
 
 // ---------- boot ----------
+buildColumnPicker();
 if (getKey()) { $("apiKey").value = ""; connect(); }
 </script>
 </body>
