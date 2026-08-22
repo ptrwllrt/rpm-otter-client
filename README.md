@@ -1,8 +1,8 @@
 # Otterly brand-report exporter
 
 Pulls every prompt and every AI response from an [Otterly.ai](https://otterly.ai) brand
-report into **CSV files** — one per prompt by default (or a single merged file) — that open
-directly in Excel and are ready for further analysis (e.g. by an AI like Claude).
+report into **Excel or CSV** — one file/sheet per prompt by default (or everything merged) —
+ready for review and for further analysis (e.g. by an AI like Claude).
 
 There are two ways to use it:
 
@@ -45,7 +45,10 @@ npx netlify-cli deploy --prod
 
 ### Export options in the web app
 
-- **Aufteilung** — one CSV per prompt bundled into a `.zip` (default), or everything in one CSV.
+- **Format** — Excel (`.xlsx`) or CSV. The Excel writer is hand-rolled on top of a tiny
+  zip packer (no library), so there's nothing large to load and no `XLSX is not defined`.
+- **Aufteilung** — one per prompt, or everything together. Per-prompt means one sheet (tab)
+  per prompt for Excel, or a `.zip` of CSVs for CSV.
 - **Spalten** — pick which columns to include; defaults to the seven listed below.
 - **Zeitraum / Engines** — look-back window (default 14 days) and an optional single engine.
 
@@ -91,9 +94,10 @@ npm run pull -- <reportId> --country us,uk
 npm run pull -- <reportId> --engine chatgpt
 ```
 
-## What's in the CSV
+## What's in the export
 
-One row per AI response. The default columns (web app and CLI alike) are:
+The columns are the same whether you export Excel or CSV (Excel is a web-app option; the CLI
+writes CSV). One row per AI response. The default columns are:
 
 `prompt`, `engine`, `brand_mentioned`, `brand_sentiment`, `competitors_mentioned`,
 `response_text`, `citations`.

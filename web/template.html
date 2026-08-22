@@ -57,7 +57,7 @@
 <body>
 <div class="wrap">
   <h1>Otterly Export</h1>
-  <p class="sub">Alle Prompt-Antworten eines Otterly-Markenberichts als CSV exportieren — einzeln pro Prompt (ZIP) oder gesammelt.</p>
+  <p class="sub">Alle Prompt-Antworten eines Otterly-Markenberichts als Excel oder CSV exportieren — einzeln pro Prompt oder gesammelt.</p>
 
   <!-- Step 1: API key -->
   <div class="card" id="keyCard">
@@ -112,10 +112,17 @@
       </div>
     </div>
     <div style="margin-top:14px">
+      <label>Format</label>
+      <div class="radios">
+        <label class="rl"><input type="radio" name="format" value="xlsx" checked> Excel (.xlsx)</label>
+        <label class="rl"><input type="radio" name="format" value="csv"> CSV</label>
+      </div>
+    </div>
+    <div style="margin-top:14px">
       <label>Aufteilung</label>
       <div class="radios">
-        <label class="rl"><input type="radio" name="fileMode" value="perPrompt" checked> Eine Datei pro Prompt (als ZIP)</label>
-        <label class="rl"><input type="radio" name="fileMode" value="single"> Alles in einer Datei</label>
+        <label class="rl"><input type="radio" name="fileMode" value="perPrompt" checked> Eine Datei pro Prompt <span class="muted-inline" id="splitHint"></span></label>
+        <label class="rl"><input type="radio" name="fileMode" value="single"> Alles zusammen</label>
       </div>
     </div>
     <details style="margin-top:14px">
@@ -289,6 +296,7 @@ async function runExport() {
   const engine = $("engineSel").value;
   const cols = selectedColumns();
   const perPrompt = document.querySelector('input[name="fileMode"]:checked').value === "perPrompt";
+  const format = document.querySelector('input[name="format"]:checked').value;   // "xlsx" | "csv"
   const countries = report.countries && report.countries.length ? report.countries : [null];
   const base = windowForDays(days);
 
@@ -326,26 +334,35 @@ async function runExport() {
     }
     if (!total) { setStatus("Keine Antworten in diesem Zeitraum gefunden.", "err"); return; }
 
-    if (perPrompt) {
-      setStatus(`ZIP wird erstellt (${groups.length} Dateien, ${total} Antworten)…`);
+    setStatus(`Datei wird erstellt (${total} Antworten)…`);
+    let blob, name, relabel;
+    if (format === "xlsx") {
+      // Excel: one workbook. Per-prompt → one sheet (tab) per prompt; else one sheet.
+      const sheets = perPrompt
+        ? groups.map((g) => ({ name: g.prompt, cols, rows: g.rows }))
+        : [{ name: "all", cols, rows: groups.flatMap((g) => g.rows) }];
+      blob = makeXlsx(sheets);
+      name = fileBase(report, "all") + ".xlsx";
+      relabel = "Excel erneut herunterladen";
+    } else if (perPrompt) {
+      // CSV per prompt → a ZIP of CSVs.
       const used = new Map();
       const files = groups.map((g) => {
-        let name = fileBase(report, g.prompt);
-        const n = (used.get(name) || 0) + 1; used.set(name, n);   // de-dupe identical names
-        if (n > 1) name += `_${n}`;
-        return { name: name + ".csv", data: toCsv(cols, g.rows) };
+        let fn = fileBase(report, g.prompt);
+        const n = (used.get(fn) || 0) + 1; used.set(fn, n);   // de-dupe identical names
+        if (n > 1) fn += `_${n}`;
+        return { name: fn + ".csv", data: toCsv(cols, g.rows) };
       });
-      const zipName = fileBase(report, "all") + ".zip";
-      const blob = makeZip(files);
-      triggerDownload(blob, zipName);
-      $("files").appendChild(fileLink(blob, zipName, "ZIP erneut herunterladen"));
+      blob = makeZip(files);
+      name = fileBase(report, "all") + ".zip";
+      relabel = "ZIP erneut herunterladen";
     } else {
-      const allRows = groups.flatMap((g) => g.rows);
-      const name = fileBase(report, "all") + ".csv";
-      const blob = csvBlob(toCsv(cols, allRows));
-      triggerDownload(blob, name);
-      $("files").appendChild(fileLink(blob, name, "CSV erneut herunterladen"));
+      blob = csvBlob(toCsv(cols, groups.flatMap((g) => g.rows)));
+      name = fileBase(report, "all") + ".csv";
+      relabel = "CSV erneut herunterladen";
     }
+    triggerDownload(blob, name);
+    $("files").appendChild(fileLink(blob, name, relabel));
     setStatus(`Fertig — ${total} Antworten aus ${promptCount} Prompts.`, "ok");
     setBar(1);
   } catch (e) {
@@ -501,9 +518,73 @@ function makeZip(files) {
   return new Blob([...parts, ...centralParts, end], { type: "application/zip" });
 }
 
+// ---------- minimal XLSX (built on makeZip, no library) ----------
+// An .xlsx is a zip of XML parts. We emit inline strings (numbers as numeric
+// cells) — enough for a clean, Excel-openable workbook with one sheet per group.
+const xmlEsc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]));
+function colRef(n) { let s = ""; n++; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - m - 1) / 26; } return s; }
+function sheetXml(cols, rows) {
+  const cell = (v, ref) => {
+    if (typeof v === "number" && isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
+    return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(v == null ? "" : v)}</t></is></c>`;
+  };
+  const out = [`<row r="1">${cols.map((c, ci) => cell(c, colRef(ci) + "1")).join("")}</row>`];
+  rows.forEach((r, ri) => {
+    const rn = ri + 2;
+    out.push(`<row r="${rn}">${cols.map((c, ci) => cell(r[c], colRef(ci) + rn)).join("")}</row>`);
+  });
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${out.join("")}</sheetData></worksheet>`;
+}
+function uniqueSheetNames(raw) {
+  const out = [], used = new Set();
+  for (let n of raw) {
+    n = String(n || "Sheet").replace(/[\[\]:*?/\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 31) || "Sheet";
+    const base = n; let k = 1;
+    while (used.has(n.toLowerCase())) { const suf = "_" + (++k); n = base.slice(0, 31 - suf.length) + suf; }
+    used.add(n.toLowerCase()); out.push(n);
+  }
+  return out;
+}
+function makeXlsx(sheets) {   // sheets = [{ name, cols, rows }]
+  const names = uniqueSheetNames(sheets.map((s) => s.name));
+  const decl = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+  const contentTypes = decl +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("") +
+    '</Types>';
+  const rootRels = decl +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
+  const workbook = decl +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' +
+    names.map((n, i) => `<sheet name="${xmlEsc(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("") +
+    '</sheets></workbook>';
+  const wbRels = decl +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("") +
+    '</Relationships>';
+  const files = [
+    { name: "[Content_Types].xml", data: contentTypes },
+    { name: "_rels/.rels", data: rootRels },
+    { name: "xl/workbook.xml", data: workbook },
+    { name: "xl/_rels/workbook.xml.rels", data: wbRels },
+    ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(s.cols, s.rows) })),
+  ];
+  return makeZip(files);   // returns a Blob (application/zip; fine for .xlsx)
+}
+
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
 
 // ---------- boot ----------
+function updateSplitHint() {
+  const fmt = document.querySelector('input[name="format"]:checked').value;
+  $("splitHint").textContent = fmt === "xlsx" ? "(je ein Tab)" : "(als ZIP)";
+}
+for (const r of document.querySelectorAll('input[name="format"]')) r.addEventListener("change", updateSplitHint);
+updateSplitHint();
 buildColumnPicker();
 if (getKey()) { $("apiKey").value = ""; connect(); }
 </script>
