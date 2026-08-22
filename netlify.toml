@@ -1,0 +1,8 @@
+# Netlify config: builds the single-page app into public/ and exposes the proxy.
+[build]
+  command = "npm run build:web"
+  publish = "public"
+  functions = "netlify/functions"
+
+# The proxy function declares its own route (config.path = "/api/*"),
+# so no redirect rule is needed here.

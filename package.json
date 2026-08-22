@@ -1,0 +1,28 @@
+{
+  "name": "rpm-otter-client",
+  "version": "0.1.0",
+  "description": "Pull Otterly.ai brand-report prompt responses into Excel",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "list": "node src/cli.js list",
+    "pull": "node src/cli.js pull",
+    "build:web": "node web/build.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ptrwllrt/rpm-otter-client.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ptrwllrt/rpm-otter-client/issues"
+  },
+  "homepage": "https://github.com/ptrwllrt/rpm-otter-client#readme",
+  "type": "module",
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  }
+}

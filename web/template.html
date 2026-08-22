@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Otterly Export</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --ink: #1a1d21; --muted: #6b7280;
+    --line: #e3e6ea; --accent: #2f6df6; --accent-ink: #fff; --ok: #16a34a; --err: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 14px; }
+  label { display: block; font-weight: 600; margin: 0 0 6px; font-size: 14px; }
+  input, select {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+    font-size: 15px; background: #fff; color: var(--ink);
+  }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > * { flex: 1; min-width: 160px; }
+  button {
+    background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px;
+    padding: 10px 18px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .hidden { display: none; }
+  .status { margin-top: 14px; font-size: 14px; white-space: pre-wrap; }
+  .status.err { color: var(--err); }
+  .status.ok { color: var(--ok); }
+  .bar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; margin-top: 12px; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .files a { display: inline-block; margin-right: 14px; margin-top: 10px; font-weight: 600; }
+  .keyrow { display: flex; gap: 8px; align-items: center; }
+  .keyrow input { flex: 1; }
+  .muted-inline { color: var(--muted); font-size: 13px; }
+  code { background: #eef0f3; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Otterly Export</h1>
+  <p class="sub">Alle Prompt-Antworten eines Otterly-Markenberichts in eine Excel-Datei exportieren.</p>
+
+  <!-- Step 1: API key -->
+  <div class="card" id="keyCard">
+    <h2>1 · Verbinden</h2>
+    <label for="apiKey">Otterly API-Schlüssel</label>
+    <div class="keyrow">
+      <input id="apiKey" type="password" placeholder="API-Schlüssel einfügen" autocomplete="off" />
+      <button id="connectBtn">Verbinden</button>
+    </div>
+    <p class="hint">Wird nur in diesem Browser auf diesem Mac gespeichert. Er wird ausschließlich an Otterly gesendet, sonst nirgendwohin.
+      <a href="#" id="forgetKey" class="muted-inline">Schlüssel löschen</a></p>
+    <div class="status err hidden" id="keyStatus"></div>
+  </div>
+
+  <!-- Step 2: pick brand + report -->
+  <div class="card hidden" id="pickCard">
+    <h2>2 · Bericht auswählen</h2>
+    <div class="row">
+      <div>
+        <label for="brandSel">Marke</label>
+        <select id="brandSel"></select>
+      </div>
+      <div>
+        <label for="reportSel">Bericht</label>
+        <select id="reportSel"></select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <div>
+        <label for="daysSel">Zeitraum</label>
+        <select id="daysSel">
+          <option value="30">Letzte 30 Tage</option>
+          <option value="90">Letzte 90 Tage</option>
+          <option value="120" selected>Letzte 120 Tage</option>
+          <option value="180">Letzte 180 Tage</option>
+          <option value="365">Letzte 365 Tage</option>
+        </select>
+      </div>
+      <div>
+        <label for="engineSel">Engines</label>
+        <select id="engineSel">
+          <option value="">Alle Engines</option>
+          <option value="chatgpt">ChatGPT</option>
+          <option value="google">Google AI Overview</option>
+          <option value="google_ai_mode">Google AI Mode</option>
+          <option value="gemini">Gemini</option>
+          <option value="perplexity">Perplexity</option>
+          <option value="copilot">Copilot</option>
+          <option value="claude">Claude</option>
+        </select>
+      </div>
+    </div>
+    <p class="hint" id="reportMeta"></p>
+    <button id="exportBtn" style="margin-top:6px">Nach Excel exportieren</button>
+    <div class="bar hidden" id="barWrap"><div id="bar"></div></div>
+    <div class="status" id="exportStatus"></div>
+    <div class="files" id="files"></div>
+  </div>
+
+  <p class="muted-inline">Die Daten stammen aus der öffentlichen Otterly-API. Diese Seite läuft vollständig auf Ihrem Mac.</p>
+</div>
+
+<!--SHEETJS-->
+
+<script>
+"use strict";
+// When served over http(s) (e.g. on Netlify) we call the same-origin proxy at
+// /api, which forwards to Otterly and fixes the missing CORS header. Opened as a
+// bare local file, we'd hit Otterly directly — which the browser blocks — so the
+// hosted version is the supported one.
+const BASE = location.protocol === "file:" ? "https://data.otterly.ai" : "/api";
+const LS_KEY = "otterly_api_key";
+
+const $ = (id) => document.getElementById(id);
+let REPORTS = [];      // all brand reports
+let BY_BRAND = {};     // brand -> [reports]
+
+// ---------- API ----------
+async function apiGet(path, params = {}) {
+  const url = new URL(BASE + path);
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === "") continue;
+    url.searchParams.set(k, String(v));
+  }
+  const key = getKey();
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    let res;
+    try {
+      res = await fetch(url, { headers: { Authorization: "Bearer " + key, Accept: "application/json" } });
+    } catch (e) {
+      if (attempt < 4) { await sleep(500 * attempt); continue; }
+      throw new Error("Netzwerkfehler — bitte Verbindung prüfen.");
+    }
+    if (res.ok) return res.json();
+    if ((res.status === 429 || res.status >= 500) && attempt < 4) {
+      const ra = Number(res.headers.get("retry-after"));
+      await sleep(ra > 0 ? ra * 1000 : 1000 * attempt);
+      continue;
+    }
+    const hint = { 401: "Nicht autorisiert — bitte API-Schlüssel prüfen.", 403: "Kein Zugriff — Ihr Tarif enthält möglicherweise keinen API-Zugang.",
+      429: "Anfragelimit erreicht — bitte kurz warten und erneut versuchen." }[res.status] || ("HTTP " + res.status);
+    throw new Error(hint);
+  }
+}
+async function listBrandReports() {
+  const items = []; let cursor;
+  do {
+    const page = await apiGet("/v1/reports/brand", { cursor });
+    items.push(...(page.items || []));
+    cursor = page.paging && page.paging.hasMore ? page.paging.nextCursor : null;
+  } while (cursor);
+  return items;
+}
+async function listReportPrompts(reportId, w) {
+  const items = []; let offset = 0; const limit = 100;
+  for (;;) {
+    const page = await apiGet(`/v1/reports/brand/${encodeURIComponent(reportId)}/prompts`,
+      { startDate: w.startDate, endDate: w.endDate, country: w.country, offset, limit });
+    const batch = page.items || [];
+    items.push(...batch);
+    if (batch.length < limit) break;
+    offset += batch.length;
+  }
+  return items;
+}
+async function listPromptResponses(reportId, promptId, w) {
+  const items = []; let cursor;
+  do {
+    const page = await apiGet(
+      `/v1/reports/brand/${encodeURIComponent(reportId)}/prompts/${encodeURIComponent(promptId)}/ai-responses`,
+      { startDate: w.startDate, endDate: w.endDate, country: w.country, engine: w.engine, cursor });
+    items.push(...(page.items || []));
+    cursor = page.paging && page.paging.hasMore ? page.paging.nextCursor : null;
+  } while (cursor);
+  return items;
+}
+
+// ---------- helpers ----------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const getKey = () => localStorage.getItem(LS_KEY) || "";
+function fmt(d) { return d.toISOString().slice(0, 10); }
+function windowForDays(days) {
+  const end = new Date(); const start = new Date();
+  start.setDate(end.getDate() - days);
+  return { startDate: fmt(start), endDate: fmt(end) };
+}
+
+// ---------- UI flow ----------
+$("connectBtn").onclick = connect;
+$("apiKey").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+$("forgetKey").onclick = (e) => { e.preventDefault(); localStorage.removeItem(LS_KEY); location.reload(); };
+
+async function connect() {
+  const key = $("apiKey").value.trim() || getKey();
+  if (!key) { showKeyErr("Bitte API-Schlüssel einfügen."); return; }
+  localStorage.setItem(LS_KEY, key);
+  $("connectBtn").disabled = true; $("connectBtn").textContent = "Verbinde…";
+  showKeyErr("");
+  try {
+    REPORTS = await listBrandReports();
+    if (!REPORTS.length) { showKeyErr("Verbunden, aber für diesen Schlüssel wurden keine Markenberichte gefunden."); return; }
+    buildBrandPicker();
+    $("keyCard").classList.add("hidden");
+    $("pickCard").classList.remove("hidden");
+  } catch (e) {
+    showKeyErr(e.message);
+  } finally {
+    $("connectBtn").disabled = false; $("connectBtn").textContent = "Verbinden";
+  }
+}
+function showKeyErr(msg) {
+  const el = $("keyStatus");
+  el.textContent = msg; el.classList.toggle("hidden", !msg);
+}
+
+function buildBrandPicker() {
+  BY_BRAND = {};
+  for (const r of REPORTS) (BY_BRAND[r.brand] ||= []).push(r);
+  const brands = Object.keys(BY_BRAND).sort((a, b) => a.localeCompare(b));
+  $("brandSel").innerHTML = brands.map((b) => `<option>${esc(b)}</option>`).join("");
+  $("brandSel").onchange = buildReportPicker;
+  buildReportPicker();
+}
+function buildReportPicker() {
+  const brand = $("brandSel").value;
+  const reports = BY_BRAND[brand] || [];
+  $("reportSel").innerHTML = reports
+    .map((r) => `<option value="${esc(r.id)}">${esc(r.reportTitle || "(ohne Titel)")}</option>`).join("");
+  $("reportSel").onchange = showMeta;
+  showMeta();
+}
+function currentReport() {
+  return REPORTS.find((r) => r.id === $("reportSel").value);
+}
+function showMeta() {
+  const r = currentReport();
+  $("reportMeta").textContent = r ? `Länder: ${(r.countries || []).join(", ") || "—"}  ·  Bericht-ID: ${r.id}` : "";
+}
+
+$("exportBtn").onclick = runExport;
+async function runExport() {
+  const report = currentReport();
+  if (!report) return;
+  const days = Number($("daysSel").value);
+  const engine = $("engineSel").value;
+  const countries = report.countries && report.countries.length ? report.countries : [null];
+  const base = windowForDays(days);
+
+  $("exportBtn").disabled = true;
+  $("files").innerHTML = "";
+  $("barWrap").classList.remove("hidden");
+  setBar(0);
+  const setStatus = (msg, cls) => { const el = $("exportStatus"); el.textContent = msg; el.className = "status" + (cls ? " " + cls : ""); };
+
+  const rows = [], promptSummary = [];
+  try {
+    for (const country of countries) {
+      const w = { ...base, country, engine };
+      setStatus(`Lade Prompts für ${country || "Bericht"}…`);
+      const prompts = await listReportPrompts(report.id, w);
+      for (let i = 0; i < prompts.length; i++) {
+        const p = prompts[i];
+        const responses = await listPromptResponses(report.id, p.id, w);
+        setStatus(`${country || ""} — Prompt ${i + 1}/${prompts.length}: ${responses.length} Antworten (bisher gesamt ${rows.length + responses.length})`);
+        setBar((i + 1) / prompts.length);
+        promptSummary.push({
+          Land: country, Rang: p.rank, Prompt: p.prompt, "Suchvolumen": p.volume,
+          "Marken-Nennungen": p.brandMentions, "Domain-Nennungen": p.domainMentions,
+          "Anzahl Antworten": responses.length, Tags: (p.tags || []).map((t) => t.name).join(", "),
+          "Prompt-ID": p.id,
+        });
+        for (const resp of responses) {
+          const mentions = resp.brandMentions || [];
+          const main = mentions.find((m) => m.isMainBrand);
+          const comps = mentions.filter((m) => !m.isMainBrand && m.mentions > 0).map((m) => m.brand);
+          rows.push({
+            Land: country, Prompt: p.prompt, Engine: resp.engine, "Datum": resp.runDate,
+            Status: resp.state, "Marke genannt": main && main.mentions > 0 ? "ja" : "nein",
+            "Nennungen der Marke": (main && main.mentions) || 0, "Genannte Wettbewerber": comps.join(", "),
+            "Anzahl Quellen": (resp.citations || []).length,
+            Quellen: (resp.citations || []).map((c) => c.link).join("\n"),
+            "Antworttext": resp.content || "", "Prompt-ID": p.id, "Run-ID": resp.runId,
+          });
+        }
+      }
+    }
+    if (!rows.length) { setStatus("Keine Antworten in diesem Zeitraum gefunden.", "err"); return; }
+
+    setStatus(`Excel wird erstellt (${rows.length} Antworten)…`);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const safe = (report.brand || "report").replace(/[^\w-]+/g, "_");
+    buildAndDownload(report, base, rows, promptSummary, `${safe}_${stamp}`);
+    setStatus(`Fertig — ${rows.length} Antworten aus ${promptSummary.length} Prompts.`, "ok");
+    setBar(1);
+  } catch (e) {
+    setStatus("Fehler: " + e.message, "err");
+  } finally {
+    $("exportBtn").disabled = false;
+  }
+}
+function setBar(frac) { $("bar").style.width = Math.round(frac * 100) + "%"; }
+
+// ---------- Excel / JSON output ----------
+function buildAndDownload(report, w, rows, promptSummary, baseName) {
+  const wb = XLSX.utils.book_new();
+
+  const wsResp = XLSX.utils.json_to_sheet(rows);
+  wsResp["!cols"] = [ {wch:9},{wch:50},{wch:14},{wch:22},{wch:9},{wch:14},{wch:16},{wch:26},{wch:10},{wch:50},{wch:100},{wch:22},{wch:22} ];
+  wsResp["!autofilter"] = { ref: XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:rows.length, c:12} }) };
+  XLSX.utils.book_append_sheet(wb, wsResp, "Antworten");
+
+  const wsP = XLSX.utils.json_to_sheet(promptSummary);
+  wsP["!cols"] = [ {wch:9},{wch:7},{wch:60},{wch:13},{wch:15},{wch:15},{wch:12},{wch:24},{wch:22} ];
+  XLSX.utils.book_append_sheet(wb, wsP, "Prompts");
+
+  const about = [
+    ["Marke", report.brand], ["Berichtstitel", report.reportTitle], ["Bericht-ID", report.id],
+    ["Länder", (report.countries || []).join(", ")], ["Zeitraum", `${w.startDate} → ${w.endDate}`],
+    ["Prompts geladen", promptSummary.length], ["Antworten geladen", rows.length],
+    ["Erstellt", new Date().toISOString()], ["Quelle", "Öffentliche Otterly.ai-API"],
+  ];
+  const wsA = XLSX.utils.aoa_to_sheet(about);
+  wsA["!cols"] = [ {wch:20},{wch:80} ];
+  XLSX.utils.book_append_sheet(wb, wsA, "Info");
+
+  XLSX.writeFile(wb, baseName + ".xlsx");
+
+  // JSON for the analysis step
+  const json = JSON.stringify({
+    report: { id: report.id, brand: report.brand, reportTitle: report.reportTitle, countries: report.countries },
+    window: w, prompts: promptSummary, responses: rows,
+  }, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = baseName + ".json";
+  a.textContent = "JSON herunterladen (für KI-Analyse)";
+  $("files").appendChild(a);
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
+
+// ---------- boot ----------
+if (getKey()) { $("apiKey").value = ""; connect(); }
+</script>
+</body>
+</html>
