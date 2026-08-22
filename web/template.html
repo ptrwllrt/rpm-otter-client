@@ -116,11 +116,13 @@
 
 <script>
 "use strict";
-// When served over http(s) (e.g. on Netlify) we call the same-origin proxy at
-// /api, which forwards to Otterly and fixes the missing CORS header. Opened as a
-// bare local file, we'd hit Otterly directly — which the browser blocks — so the
-// hosted version is the supported one.
-const BASE = location.protocol === "file:" ? "https://data.otterly.ai" : "/api";
+// This app is a local file Alexandra opens directly. It cannot call Otterly from
+// the browser (Otterly omits the CORS header on real responses), so it goes
+// through our Netlify proxy, which forwards to Otterly and adds that header.
+// PROXY_BASE is the deployed proxy. When previewing with `netlify-cli dev`, the
+// same-origin /api is used instead.
+const PROXY_BASE = "https://rpm-otterly-client.netlify.app/api";
+const BASE = location.protocol === "file:" ? PROXY_BASE : "/api";
 const LS_KEY = "otterly_api_key";
 
 const $ = (id) => document.getElementById(id);

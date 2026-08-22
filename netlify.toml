@@ -1,8 +1,10 @@
-# Netlify config: builds the single-page app into public/ and exposes the proxy.
+# Netlify config: this site hosts ONLY the /api proxy function.
+# The app itself (otterly-export.html) is a local file, not published here.
 [build]
-  command = "npm run build:web"
-  publish = "public"
+  command = ""
+  publish = "site"
   functions = "netlify/functions"
 
-# The proxy function declares its own route (config.path = "/api/*"),
-# so no redirect rule is needed here.
+# "site" contains only a neutral placeholder page, so visiting the root URL
+# does not render the app. The proxy function declares its own route
+# (config.path = "/api/*"), so no redirect rule is needed.

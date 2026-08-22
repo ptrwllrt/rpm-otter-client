@@ -5,3 +5,6 @@ output/
 .DS_Store
 public/
 otterly-export.html
+
+# Local Netlify folder
+.netlify
