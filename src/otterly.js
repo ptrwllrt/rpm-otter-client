@@ -109,6 +109,16 @@ export class OtterlyClient {
     } while (cursor);
     return items;
   }
+
+  // GET /v1/reports/brand/{reportId}/prompts/{promptId} — prompt details.
+  // Carries brandRank[].sentiment (positive/neutral/negative/nss) per brand,
+  // aggregated over the window. This is the only place sentiment is exposed.
+  async getPromptDetails(reportId, promptId, { startDate, endDate, country } = {}) {
+    return this.#get(
+      `/v1/reports/brand/${encodeURIComponent(reportId)}/prompts/${encodeURIComponent(promptId)}`,
+      { startDate, endDate, country }
+    );
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

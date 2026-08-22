@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { loadEnv, resolveDateWindow, OUTPUT_DIR } from "./config.js";
 import { OtterlyClient, OtterlyError } from "./otterly.js";
 import { toCsv } from "./csv.js";
-import { toRow, resolveColumns, fileBase } from "./columns.js";
+import { toRow, resolveColumns, fileBase, mainBrandNss } from "./columns.js";
 
 loadEnv();
 
@@ -104,6 +104,7 @@ async function pullReport(client, argv) {
 
   const cols = resolveColumns(flags.columns, { all: "all-columns" in flags });
   const single = "single" in flags;   // one merged file instead of one per prompt
+  const needSentiment = cols.includes("brand_sentiment");  // needs an extra call per prompt
 
   console.log(`\nBrand:     ${report.brand} — ${report.reportTitle ?? ""}`);
   console.log(`Window:    ${window.startDate} → ${window.endDate}`);
@@ -127,12 +128,17 @@ async function pullReport(client, argv) {
       const responses = await client.listPromptResponses(report.id, p.id, {
         ...window, country, engine: flags.engine,
       });
+      let nss = null;
+      if (needSentiment) {
+        const detail = await client.getPromptDetails(report.id, p.id, { ...window, country });
+        nss = mainBrandNss(detail, report.brand);
+      }
       total += responses.length;
       process.stdout.write(`\r[${country}] prompt ${i + 1}/${prompts.length} — ${responses.length} responses     `);
 
       let g = byPrompt.get(p.id);
       if (!g) { g = { prompt: p.prompt, rows: [] }; byPrompt.set(p.id, g); groups.push(g); }
-      for (const resp of responses) g.rows.push(toRow(cols, country, p, resp));
+      for (const resp of responses) g.rows.push(toRow(cols, country, p, resp, nss));
     }
     process.stdout.write("\n");
   }

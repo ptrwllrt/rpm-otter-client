@@ -99,8 +99,11 @@ One row per AI response. The default columns (web app and CLI alike) are:
 `response_text`, `citations`.
 
 Notes:
-- `brand_sentiment` is always **empty** — the Otterly UI shows sentiment but the public API
-  does not expose it, so there's nothing to fill it with (kept as a column for a later step).
+- `brand_sentiment` is the main brand's **Net Sentiment Score (nss, −100…+100)** for that
+  prompt, aggregated over the date window (from the prompt-details endpoint's
+  `brandRank[].sentiment`). It is a per-prompt value, so it repeats across that prompt's
+  response rows; it's blank when the brand isn't ranked for the prompt in the window.
+  Including this column costs one extra API call per prompt.
 - `brand_mentioned` is `true`/`false`, `competitors_mentioned` is a comma-separated list of
   other brands mentioned, `citations` is the citation links (one per line).
 - More columns are available (`country`, `run_date`, `state`, `brand_mentions_count`,

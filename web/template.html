@@ -209,6 +209,15 @@ async function listPromptResponses(reportId, promptId, w) {
   } while (cursor);
   return items;
 }
+// Main brand's per-prompt Net Sentiment Score (or null). Sentiment lives only on
+// the prompt-details endpoint, aggregated over the window; brandRank has no
+// isMainBrand flag, so match by the report's brand name.
+async function promptNss(reportId, promptId, brandName, w) {
+  const d = await apiGet(`/v1/reports/brand/${encodeURIComponent(reportId)}/prompts/${encodeURIComponent(promptId)}`,
+    { startDate: w.startDate, endDate: w.endDate, country: w.country });
+  const entry = (d.brandRank || []).find((b) => b.brand === brandName);
+  return entry && entry.sentiment ? entry.sentiment.nss : null;
+}
 
 // ---------- helpers ----------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -291,6 +300,8 @@ async function runExport() {
   $("barWrap").classList.remove("hidden");
   setBar(0);
 
+  const needSentiment = cols.includes("brand_sentiment");   // needs an extra call per prompt
+
   // Group rows by prompt so we can emit one file per prompt (or merge them).
   const groups = [];              // [{ prompt, rows }]
   const byPrompt = new Map();     // prompt id -> group
@@ -304,12 +315,13 @@ async function runExport() {
       for (let i = 0; i < prompts.length; i++) {
         const p = prompts[i];
         const responses = await listPromptResponses(report.id, p.id, w);
+        const nss = needSentiment ? await promptNss(report.id, p.id, report.brand, w) : null;
         total += responses.length;
         setStatus(`${country || ""} — Prompt ${i + 1}/${prompts.length}: ${responses.length} Antworten (gesamt ${total})`);
         setBar((i + 1) / prompts.length);
         let g = byPrompt.get(p.id);
         if (!g) { g = { prompt: p.prompt, rows: [] }; byPrompt.set(p.id, g); groups.push(g); }
-        for (const resp of responses) g.rows.push(toRow(cols, country, p, resp));
+        for (const resp of responses) g.rows.push(toRow(cols, country, p, resp, nss));
       }
     }
     if (!total) { setStatus("Keine Antworten in diesem Zeitraum gefunden.", "err"); return; }
@@ -351,7 +363,7 @@ const COLUMNS = {
   prompt: (c) => c.p.prompt,
   engine: (c) => c.resp.engine,
   brand_mentioned: (c) => (c.mainMentions > 0 ? "true" : "false"),
-  brand_sentiment: () => "",                       // not exposed by the API (shown only in Otterly's UI)
+  brand_sentiment: (c) => (c.nss == null ? "" : c.nss),   // main brand's per-prompt Net Sentiment Score
   competitors_mentioned: (c) => c.competitors.join(", "),
   response_text: (c) => c.resp.content ?? "",
   citations: (c) => (c.resp.citations ?? []).map((x) => x.link).join("\n"),
@@ -370,17 +382,18 @@ const COLUMNS = {
 };
 const DEFAULT_COLUMNS = ["prompt", "engine", "brand_mentioned", "brand_sentiment", "competitors_mentioned", "response_text", "citations"];
 
-function rowContext(country, p, resp) {
+function rowContext(country, p, resp, nss) {
   const mentions = resp.brandMentions ?? [];
   const main = mentions.find((m) => m.isMainBrand);
   return {
-    country, p, resp,
+    country, p, resp, nss,
     mainMentions: (main && main.mentions) || 0,
     competitors: mentions.filter((m) => !m.isMainBrand && m.mentions > 0).map((m) => m.brand),
   };
 }
-function toRow(cols, country, p, resp) {
-  const c = rowContext(country, p, resp);
+// `nss` is the main brand's per-prompt Net Sentiment Score (or null when unavailable).
+function toRow(cols, country, p, resp, nss) {
+  const c = rowContext(country, p, resp, nss);
   const row = {};
   for (const k of cols) row[k] = COLUMNS[k] ? COLUMNS[k](c) : "";
   return row;

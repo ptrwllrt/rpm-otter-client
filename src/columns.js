@@ -7,7 +7,7 @@ export const COLUMNS = {
   prompt: (c) => c.p.prompt,
   engine: (c) => c.resp.engine,
   brand_mentioned: (c) => (c.mainMentions > 0 ? "true" : "false"),
-  brand_sentiment: () => "",                       // not exposed by the API (shown only in Otterly's UI)
+  brand_sentiment: (c) => (c.nss == null ? "" : c.nss),   // main brand's per-prompt Net Sentiment Score
   competitors_mentioned: (c) => c.competitors.join(", "),
   response_text: (c) => c.resp.content ?? "",
   citations: (c) => (c.resp.citations ?? []).map((x) => x.link).join("\n"),
@@ -30,21 +30,30 @@ export const DEFAULT_COLUMNS = [
   "competitors_mentioned", "response_text", "citations",
 ];
 
-function rowContext(country, p, resp) {
+function rowContext(country, p, resp, nss) {
   const mentions = resp.brandMentions ?? [];
   const main = mentions.find((m) => m.isMainBrand);
   return {
-    country, p, resp,
+    country, p, resp, nss,
     mainMentions: (main && main.mentions) || 0,
     competitors: mentions.filter((m) => !m.isMainBrand && m.mentions > 0).map((m) => m.brand),
   };
 }
 
-export function toRow(cols, country, p, resp) {
-  const c = rowContext(country, p, resp);
+// `nss` is the main brand's Net Sentiment Score for this prompt (or null/undefined
+// when unavailable), pulled from prompt details — see mainBrandNss below.
+export function toRow(cols, country, p, resp, nss) {
+  const c = rowContext(country, p, resp, nss);
   const row = {};
   for (const k of cols) row[k] = COLUMNS[k] ? COLUMNS[k](c) : "";
   return row;
+}
+
+// Extract the main brand's Net Sentiment Score from a prompt-details payload.
+// brandRank has no isMainBrand flag, so match by the report's brand name.
+export function mainBrandNss(detail, brandName) {
+  const entry = (detail?.brandRank ?? []).find((b) => b.brand === brandName);
+  return entry?.sentiment?.nss ?? null;
 }
 
 // Resolve a user-supplied column list ("a,b,c") against the catalog; returns the
