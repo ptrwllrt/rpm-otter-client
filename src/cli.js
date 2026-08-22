@@ -59,6 +59,29 @@ async function listReports(client) {
   console.log("Pull one with:  node src/cli.js pull <id>\n");
 }
 
+// One CSV row per AI response, using the API's own field names. Nested arrays
+// (brandMentions, citations, ads, shopping, webSearchQuery) are kept verbatim as
+// JSON. country/prompt/promptId are the API fields that give each response context.
+// Mirror of the web app's toRow — keep the two in sync.
+function toRow(country, p, resp) {
+  return {
+    country,
+    prompt: p.prompt,
+    promptId: p.id,
+    runId: resp.runId,
+    runDate: resp.runDate,
+    engine: resp.engine,
+    state: resp.state,
+    content: resp.content ?? "",
+    overviewAvailable: resp.overviewAvailable,
+    brandMentions: JSON.stringify(resp.brandMentions ?? []),
+    citations: JSON.stringify(resp.citations ?? []),
+    ads: JSON.stringify(resp.ads ?? []),
+    shopping: JSON.stringify(resp.shopping ?? []),
+    webSearchQuery: JSON.stringify(resp.webSearchQuery ?? []),
+  };
+}
+
 function parseFlags(argv) {
   const flags = {};
   for (let i = 0; i < argv.length; i++) {
@@ -112,27 +135,7 @@ async function pullReport(client, argv) {
       });
       process.stdout.write(`\r[${country}] prompt ${i + 1}/${prompts.length} — ${responses.length} responses     `);
 
-      for (const resp of responses) {
-        const mentions = resp.brandMentions ?? [];
-        const main = mentions.find((m) => m.isMainBrand);
-        const competitors = mentions.filter((m) => !m.isMainBrand && m.mentions > 0).map((m) => m.brand);
-        // German headers, identical to the web app's CSV columns.
-        rows.push({
-          Land: country,
-          Prompt: p.prompt,
-          Engine: resp.engine,
-          Datum: resp.runDate,
-          Status: resp.state,
-          "Marke genannt": main && main.mentions > 0 ? "ja" : "nein",
-          "Nennungen der Marke": main?.mentions ?? 0,
-          "Genannte Wettbewerber": competitors.join(", "),
-          "Anzahl Quellen": (resp.citations ?? []).length,
-          Quellen: (resp.citations ?? []).map((c) => c.link).join("\n"),
-          Antworttext: resp.content ?? "",
-          "Prompt-ID": p.id,
-          "Run-ID": resp.runId,
-        });
-      }
+      for (const resp of responses) rows.push(toRow(country, p, resp));
     }
     process.stdout.write("\n");
   }

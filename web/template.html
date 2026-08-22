@@ -265,36 +265,20 @@ async function runExport() {
   setBar(0);
   const setStatus = (msg, cls) => { const el = $("exportStatus"); el.textContent = msg; el.className = "status" + (cls ? " " + cls : ""); };
 
-  const rows = [], promptSummary = [];
+  const rows = [];
+  let promptCount = 0;
   try {
     for (const country of countries) {
       const w = { ...base, country, engine };
       setStatus(`Lade Prompts für ${country || "Bericht"}…`);
       const prompts = await listReportPrompts(report.id, w);
+      promptCount += prompts.length;
       for (let i = 0; i < prompts.length; i++) {
         const p = prompts[i];
         const responses = await listPromptResponses(report.id, p.id, w);
         setStatus(`${country || ""} — Prompt ${i + 1}/${prompts.length}: ${responses.length} Antworten (bisher gesamt ${rows.length + responses.length})`);
         setBar((i + 1) / prompts.length);
-        promptSummary.push({
-          Land: country, Rang: p.rank, Prompt: p.prompt, "Suchvolumen": p.volume,
-          "Marken-Nennungen": p.brandMentions, "Domain-Nennungen": p.domainMentions,
-          "Anzahl Antworten": responses.length, Tags: (p.tags || []).map((t) => t.name).join(", "),
-          "Prompt-ID": p.id,
-        });
-        for (const resp of responses) {
-          const mentions = resp.brandMentions || [];
-          const main = mentions.find((m) => m.isMainBrand);
-          const comps = mentions.filter((m) => !m.isMainBrand && m.mentions > 0).map((m) => m.brand);
-          rows.push({
-            Land: country, Prompt: p.prompt, Engine: resp.engine, "Datum": resp.runDate,
-            Status: resp.state, "Marke genannt": main && main.mentions > 0 ? "ja" : "nein",
-            "Nennungen der Marke": (main && main.mentions) || 0, "Genannte Wettbewerber": comps.join(", "),
-            "Anzahl Quellen": (resp.citations || []).length,
-            Quellen: (resp.citations || []).map((c) => c.link).join("\n"),
-            "Antworttext": resp.content || "", "Prompt-ID": p.id, "Run-ID": resp.runId,
-          });
-        }
+        for (const resp of responses) rows.push(toRow(country, p, resp));
       }
     }
     if (!rows.length) { setStatus("Keine Antworten in diesem Zeitraum gefunden.", "err"); return; }
@@ -302,8 +286,8 @@ async function runExport() {
     setStatus(`Datei wird erstellt (${rows.length} Antworten)…`);
     const stamp = new Date().toISOString().slice(0, 10);
     const safe = (report.brand || "report").replace(/[^\w-]+/g, "_");
-    buildAndDownload(report, base, rows, promptSummary, `${safe}_${stamp}`);
-    setStatus(`Fertig — ${rows.length} Antworten aus ${promptSummary.length} Prompts.`, "ok");
+    buildAndDownload(rows, `${safe}_${stamp}`);
+    setStatus(`Fertig — ${rows.length} Antworten aus ${promptCount} Prompts.`, "ok");
     setBar(1);
   } catch (e) {
     setStatus("Fehler: " + e.message, "err");
@@ -313,8 +297,30 @@ async function runExport() {
 }
 function setBar(frac) { $("bar").style.width = Math.round(frac * 100) + "%"; }
 
+// One CSV row per AI response, using the API's own field names. Nested arrays
+// (brandMentions, citations, ads, shopping, webSearchQuery) are kept verbatim as
+// JSON. country/prompt/promptId are the API fields that give each response context.
+function toRow(country, p, resp) {
+  return {
+    country,
+    prompt: p.prompt,
+    promptId: p.id,
+    runId: resp.runId,
+    runDate: resp.runDate,
+    engine: resp.engine,
+    state: resp.state,
+    content: resp.content ?? "",
+    overviewAvailable: resp.overviewAvailable,
+    brandMentions: JSON.stringify(resp.brandMentions ?? []),
+    citations: JSON.stringify(resp.citations ?? []),
+    ads: JSON.stringify(resp.ads ?? []),
+    shopping: JSON.stringify(resp.shopping ?? []),
+    webSearchQuery: JSON.stringify(resp.webSearchQuery ?? []),
+  };
+}
+
 // ---------- CSV output ----------
-function buildAndDownload(report, w, rows, promptSummary, baseName) {
+function buildAndDownload(rows, baseName) {
   // Excel (also the German locale) reads a UTF-8 BOM + semicolon-separated CSV
   // cleanly, including umlauts. Every field is quoted so newlines/commas/quotes
   // inside the response text stay intact.

@@ -92,10 +92,15 @@ npm run pull -- <reportId> --engine chatgpt
 
 ## What's in the CSV
 
-One row per AI response, with German column headers (matching the web app): Land, Prompt,
-Engine, Datum, Status, Marke genannt, Nennungen der Marke, Genannte Wettbewerber, Anzahl
-Quellen, Quellen, Antworttext, Prompt-ID, Run-ID. It's UTF-8 with a BOM and semicolon
-separators, so it opens straight into Excel (incl. the German locale) with umlauts intact.
+One row per AI response, using the Otterly API's own field names (both the web app and the
+CLI produce the same columns): `country`, `prompt`, `promptId`, `runId`, `runDate`,
+`engine`, `state`, `content`, `overviewAvailable`, `brandMentions`, `citations`, `ads`,
+`shopping`, `webSearchQuery`. The nested fields (`brandMentions`, `citations`, `ads`,
+`shopping`, `webSearchQuery`) are kept verbatim as JSON.
+
+The file is UTF-8 with a BOM and semicolon separators, so it opens straight into Excel
+(incl. the German locale) with umlauts intact. (A friendlier flattening of the nested
+columns can be revisited later.)
 
 ## Notes
 
