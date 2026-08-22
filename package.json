@@ -1,7 +1,7 @@
 {
   "name": "rpm-otter-client",
   "version": "0.1.0",
-  "description": "Pull Otterly.ai brand-report prompt responses into Excel",
+  "description": "Pull Otterly.ai brand-report prompt responses into CSV",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -20,8 +20,5 @@
     "url": "https://github.com/ptrwllrt/rpm-otter-client/issues"
   },
   "homepage": "https://github.com/ptrwllrt/rpm-otter-client#readme",
-  "type": "module",
-  "dependencies": {
-    "exceljs": "^4.4.0"
-  }
+  "type": "module"
 }

@@ -1,8 +1,8 @@
 # Otterly brand-report exporter
 
 Pulls every prompt and every AI response from an [Otterly.ai](https://otterly.ai) brand
-report into an **Excel workbook** (for review) and a **JSON file** (for analysis by an AI
-like Claude).
+report into a single **CSV file** — opens directly in Excel and is ready for further
+analysis (e.g. by an AI like Claude).
 
 There are two ways to use it:
 
@@ -14,8 +14,8 @@ There are two ways to use it:
 ## The web app (hosted on Netlify, no install)
 
 Alexandra just opens a URL, pastes the API key once, picks a **brand** and **report**, and
-clicks **Nach Excel exportieren**. The `.xlsx` downloads, plus a **JSON** link for the
-analysis step. Nothing to install.
+clicks **Als CSV exportieren**. The `.csv` downloads (last 14 days by default). Nothing to
+install.
 
 ### Why it's hosted (and not a plain double-click file)
 
@@ -77,9 +77,9 @@ npm run list
 npm run pull -- <reportId>
 ```
 
-Files land in the `output/` folder, named like `Brand_2026-08-22.xlsx` (and `.json`).
+A CSV lands in the `output/` folder, named like `Brand_2026-08-22.csv`.
 
-By default it pulls the **last 30 days** across **every country** the report tracks.
+By default it pulls the **last 14 days** across **every country** the report tracks.
 
 ### Options
 
@@ -90,12 +90,12 @@ npm run pull -- <reportId> --country us,uk
 npm run pull -- <reportId> --engine chatgpt
 ```
 
-## What's in the Excel file
+## What's in the CSV
 
-- **Responses** — one row per AI response: country, prompt, engine, run date, whether the
-  brand was mentioned, competitors mentioned, citations, and the full response text.
-- **Prompts** — an overview of each tracked prompt (search volume, mentions, # responses).
-- **About** — brand, date window, and counts, for provenance.
+One row per AI response, with German column headers (matching the web app): Land, Prompt,
+Engine, Datum, Status, Marke genannt, Nennungen der Marke, Genannte Wettbewerber, Anzahl
+Quellen, Quellen, Antworttext, Prompt-ID, Run-ID. It's UTF-8 with a BOM and semicolon
+separators, so it opens straight into Excel (incl. the German locale) with umlauts intact.
 
 ## Notes
 

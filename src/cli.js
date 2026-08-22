@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // CLI for pulling Otterly.ai brand-report responses.
 //   node src/cli.js list                 → list your brand reports
-//   node src/cli.js pull <reportId>      → pull all prompts + responses → Excel + JSON
+//   node src/cli.js pull <reportId>      → pull all prompts + responses → CSV
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadEnv, resolveDateWindow, OUTPUT_DIR } from "./config.js";
 import { OtterlyClient, OtterlyError } from "./otterly.js";
-import { writeWorkbook } from "./excel.js";
+import { toCsv } from "./csv.js";
 
 loadEnv();
 
@@ -99,11 +99,12 @@ async function pullReport(client, argv) {
   console.log("");
 
   const rows = [];
-  const promptSummary = [];
+  let promptCount = 0;
 
   for (const country of countries) {
     const prompts = await client.listReportPrompts(report.id, { ...window, country });
     console.log(`[${country}] ${prompts.length} prompt(s)`);
+    promptCount += prompts.length;
 
     for (const [i, p] of prompts.entries()) {
       const responses = await client.listPromptResponses(report.id, p.id, {
@@ -111,36 +112,25 @@ async function pullReport(client, argv) {
       });
       process.stdout.write(`\r[${country}] prompt ${i + 1}/${prompts.length} — ${responses.length} responses     `);
 
-      promptSummary.push({
-        country,
-        rank: p.rank,
-        prompt: p.prompt,
-        volume: p.volume,
-        brandMentions: p.brandMentions,
-        domainMentions: p.domainMentions,
-        responseCount: responses.length,
-        tags: (p.tags ?? []).map((t) => t.name).join(", "),
-        promptId: p.id,
-      });
-
       for (const resp of responses) {
         const mentions = resp.brandMentions ?? [];
         const main = mentions.find((m) => m.isMainBrand);
         const competitors = mentions.filter((m) => !m.isMainBrand && m.mentions > 0).map((m) => m.brand);
+        // German headers, identical to the web app's CSV columns.
         rows.push({
-          country,
-          prompt: p.prompt,
-          engine: resp.engine,
-          runDate: resp.runDate,
-          state: resp.state,
-          brandMentioned: main && main.mentions > 0 ? "yes" : "no",
-          mainBrandMentions: main?.mentions ?? 0,
-          competitorsMentioned: competitors.join(", "),
-          citationCount: (resp.citations ?? []).length,
-          citations: (resp.citations ?? []).map((c) => c.link).join("\n"),
-          content: resp.content ?? "",
-          promptId: p.id,
-          runId: resp.runId,
+          Land: country,
+          Prompt: p.prompt,
+          Engine: resp.engine,
+          Datum: resp.runDate,
+          Status: resp.state,
+          "Marke genannt": main && main.mentions > 0 ? "ja" : "nein",
+          "Nennungen der Marke": main?.mentions ?? 0,
+          "Genannte Wettbewerber": competitors.join(", "),
+          "Anzahl Quellen": (resp.citations ?? []).length,
+          Quellen: (resp.citations ?? []).map((c) => c.link).join("\n"),
+          Antworttext: resp.content ?? "",
+          "Prompt-ID": p.id,
+          "Run-ID": resp.runId,
         });
       }
     }
@@ -150,22 +140,11 @@ async function pullReport(client, argv) {
   mkdirSync(OUTPUT_DIR, { recursive: true });
   const stamp = new Date().toISOString().slice(0, 10);
   const safeBrand = (report.brand ?? "report").replace(/[^\w-]+/g, "_");
-  const base = `${safeBrand}_${stamp}`;
-  const xlsxPath = join(OUTPUT_DIR, `${base}.xlsx`);
-  const jsonPath = join(OUTPUT_DIR, `${base}.json`);
+  const csvPath = join(OUTPUT_DIR, `${safeBrand}_${stamp}.csv`);
+  writeFileSync(csvPath, toCsv(rows));
 
-  await writeWorkbook(xlsxPath, { report, window, rows, promptSummary });
-  writeFileSync(
-    jsonPath,
-    JSON.stringify(
-      { report: { id: report.id, brand: report.brand, reportTitle: report.reportTitle, countries }, window, prompts: promptSummary, responses: rows },
-      null, 2
-    )
-  );
-
-  console.log(`\nDone. ${rows.length} responses across ${promptSummary.length} prompt/country pairs.`);
-  console.log(`  Excel: ${xlsxPath}`);
-  console.log(`  JSON:  ${jsonPath}\n`);
+  console.log(`\nDone. ${rows.length} responses across ${promptCount} prompt/country pairs.`);
+  console.log(`  CSV: ${csvPath}\n`);
 }
 
 main().catch((err) => {
