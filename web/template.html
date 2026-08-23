@@ -121,7 +121,7 @@
     <div style="margin-top:14px">
       <label>Aufteilung</label>
       <div class="radios">
-        <label class="rl"><input type="radio" name="fileMode" value="perPrompt" checked> Eine Datei pro Prompt <span class="muted-inline" id="splitHint"></span></label>
+        <label class="rl"><input type="radio" name="fileMode" value="perPrompt" checked> Eine Datei pro Prompt <span class="muted-inline">(als ZIP)</span></label>
         <label class="rl"><input type="radio" name="fileMode" value="single"> Alles zusammen</label>
       </div>
     </div>
@@ -335,31 +335,33 @@ async function runExport() {
     if (!total) { setStatus("Keine Antworten in diesem Zeitraum gefunden.", "err"); return; }
 
     setStatus(`Datei wird erstellt (${total} Antworten)…`);
+    const ext = format === "xlsx" ? "xlsx" : "csv";
+    const oneFile = (g) => format === "xlsx"
+      ? makeXlsx([{ name: g.prompt, cols, rows: g.rows }])   // one-sheet workbook (bytes)
+      : toCsv(cols, g.rows);                                 // CSV text
+
     let blob, name, relabel;
-    if (format === "xlsx") {
-      // Excel: one workbook. Per-prompt → one sheet (tab) per prompt; else one sheet.
-      const sheets = perPrompt
-        ? groups.map((g) => ({ name: g.prompt, cols, rows: g.rows }))
-        : [{ name: "all", cols, rows: groups.flatMap((g) => g.rows) }];
-      blob = makeXlsx(sheets);
-      name = fileBase(report, "all") + ".xlsx";
-      relabel = "Excel erneut herunterladen";
-    } else if (perPrompt) {
-      // CSV per prompt → a ZIP of CSVs.
+    if (perPrompt) {
+      // One file per prompt, bundled into a ZIP (both formats).
       const used = new Map();
       const files = groups.map((g) => {
         let fn = fileBase(report, g.prompt);
         const n = (used.get(fn) || 0) + 1; used.set(fn, n);   // de-dupe identical names
         if (n > 1) fn += `_${n}`;
-        return { name: fn + ".csv", data: toCsv(cols, g.rows) };
+        return { name: `${fn}.${ext}`, data: oneFile(g) };
       });
-      blob = makeZip(files);
+      blob = new Blob([makeZip(files)], { type: "application/zip" });
       name = fileBase(report, "all") + ".zip";
       relabel = "ZIP erneut herunterladen";
     } else {
-      blob = csvBlob(toCsv(cols, groups.flatMap((g) => g.rows)));
-      name = fileBase(report, "all") + ".csv";
-      relabel = "CSV erneut herunterladen";
+      // Everything in one file.
+      const merged = { prompt: "all", rows: groups.flatMap((g) => g.rows) };
+      const data = oneFile(merged);
+      blob = format === "xlsx"
+        ? new Blob([data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+        : csvBlob(data);
+      name = fileBase(report, "all") + "." + ext;
+      relabel = (format === "xlsx" ? "Excel" : "CSV") + " erneut herunterladen";
     }
     triggerDownload(blob, name);
     $("files").appendChild(fileLink(blob, name, relabel));
@@ -515,7 +517,13 @@ function makeZip(files) {
   }
   const end = new Uint8Array([0x50,0x4b,0x05,0x06, ...u16(0),...u16(0),
     ...u16(files.length),...u16(files.length),...u32(centralSize),...u32(centralStart),...u16(0)]);
-  return new Blob([...parts, ...centralParts, end], { type: "application/zip" });
+  // Concatenate into one Uint8Array so a zip can itself be nested inside another zip.
+  const all = [...parts, ...centralParts, end];
+  const totalLen = all.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(totalLen);
+  let pos = 0;
+  for (const p of all) { out.set(p, pos); pos += p.length; }
+  return out;
 }
 
 // ---------- minimal XLSX (built on makeZip, no library) ----------
@@ -573,18 +581,12 @@ function makeXlsx(sheets) {   // sheets = [{ name, cols, rows }]
     { name: "xl/_rels/workbook.xml.rels", data: wbRels },
     ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(s.cols, s.rows) })),
   ];
-  return makeZip(files);   // returns a Blob (application/zip; fine for .xlsx)
+  return makeZip(files);   // Uint8Array (an .xlsx is just a zip)
 }
 
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
 
 // ---------- boot ----------
-function updateSplitHint() {
-  const fmt = document.querySelector('input[name="format"]:checked').value;
-  $("splitHint").textContent = fmt === "xlsx" ? "(je ein Tab)" : "(als ZIP)";
-}
-for (const r of document.querySelectorAll('input[name="format"]')) r.addEventListener("change", updateSplitHint);
-updateSplitHint();
 buildColumnPicker();
 if (getKey()) { $("apiKey").value = ""; connect(); }
 </script>

@@ -47,8 +47,9 @@ npx netlify-cli deploy --prod
 
 - **Format** — Excel (`.xlsx`) or CSV. The Excel writer is hand-rolled on top of a tiny
   zip packer (no library), so there's nothing large to load and no `XLSX is not defined`.
-- **Aufteilung** — one per prompt, or everything together. Per-prompt means one sheet (tab)
-  per prompt for Excel, or a `.zip` of CSVs for CSV.
+- **Aufteilung** — one per prompt, or everything together. Per-prompt delivers a `.zip`
+  with one file per prompt (an `.xlsx` each for Excel, a `.csv` each for CSV); "everything
+  together" is a single `.xlsx` or `.csv`.
 - **Spalten** — pick which columns to include; defaults to the seven listed below.
 - **Zeitraum / Engines** — look-back window (default 14 days) and an optional single engine.
 
